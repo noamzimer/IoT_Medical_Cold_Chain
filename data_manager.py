@@ -1,14 +1,14 @@
 import paho.mqtt.client as mqtt
 import sqlite3
 from icecream import ic
-from mqtt_init import broker_ip, port, topic_temp, topic_actuator, topic_alarm, TEMP_THRESHOLD
+from mqtt_init import broker_ip, port, topic_temp, topic_actuator, topic_alarm
 
 # Database Setup
 def init_db():
     conn = sqlite3.connect("project_db.sqlite")
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS temp_logs 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, value REAL)''')
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, value REAL)''')
     conn.commit()
     return conn
 
@@ -28,12 +28,14 @@ def on_message(client, userdata, msg):
         temp_value = float(payload.split(": ")[1])
         save_to_db(temp_value)
         
-        if temp_value > TEMP_THRESHOLD:
-            ic("ALERT! Temperature too high: " + str(temp_value))
-            client.publish(topic_alarm, "WARNING: High Temperature!")
-            client.publish(topic_actuator, "RELAY: ON")
+        # --- Medical Cold Chain Logic (Vaccine Fridge) ---
+        # Vaccines must be kept between 2°C and 8°C
+        if temp_value < 2.0 or temp_value > 8.0:
+            ic("CRITICAL ALERT! Temp out of safe range (2-8°C): " + str(temp_value))
+            client.publish(topic_alarm, f"CRITICAL: Temp is {temp_value}°C!")
+            client.publish(topic_actuator, "RELAY: ON") # Turn on backup cooling/alarm
         else:
-            client.publish(topic_actuator, "RELAY: OFF")
+            client.publish(topic_actuator, "RELAY: OFF") # Turn off backup
             
     except Exception as e:
         ic("Error processing message: " + str(e))
@@ -45,9 +47,8 @@ def main():
     client.connect(broker_ip, port)
     client.subscribe(topic_temp)
     
-    ic("Data Manager is running and logging to DB...")
+    ic("Medical Cold Chain Manager is running and logging to DB...")
     client.loop_forever()
 
 if __name__ == "__main__":
     main()
-    
