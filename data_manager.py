@@ -1,9 +1,9 @@
 import paho.mqtt.client as mqtt
 import sqlite3
+import ssl
 from icecream import ic
-from mqtt_init import broker_ip, port, topic_temp, topic_actuator, topic_alarm
+import mqtt_init
 
-# Database Setup
 def init_db():
     conn = sqlite3.connect("project_db.sqlite")
     cursor = conn.cursor()
@@ -21,31 +21,40 @@ def save_to_db(temp_value):
 
 def on_message(client, userdata, msg):
     payload = msg.payload.decode()
-    ic("Manager received: " + payload)
     
-    try:
-        # Extract the number from "Temperature: XX.X"
-        temp_value = float(payload.split(": ")[1])
-        save_to_db(temp_value)
+    if msg.topic == mqtt_init.topic_control and "RESET" in payload:
+        ic("Manual Reset Received! Turning off alarms.")
+        client.publish(mqtt_init.topic_alarm, "Status: Optimal (2 C - 8 C)")
+        client.publish(mqtt_init.topic_actuator, "RELAY: OFF")
+        return
         
-        # --- Medical Cold Chain Logic (Vaccine Fridge) ---
-        # Vaccines must be kept between 2°C and 8°C
-        if temp_value < 2.0 or temp_value > 8.0:
-            ic("CRITICAL ALERT! Temp out of safe range (2-8°C): " + str(temp_value))
-            client.publish(topic_alarm, f"CRITICAL: Temp is {temp_value}°C!")
-            client.publish(topic_actuator, "RELAY: ON") # Turn on backup cooling/alarm
-        else:
-            client.publish(topic_actuator, "RELAY: OFF") # Turn off backup
+    if msg.topic == mqtt_init.topic_temp:
+        ic("Manager received: " + payload)
+        try:
+            temp_value = float(payload.split(": ")[1])
+            save_to_db(temp_value)
             
-    except Exception as e:
-        ic("Error processing message: " + str(e))
+            if temp_value < mqtt_init.MIN_TEMP or temp_value > mqtt_init.MAX_TEMP:
+                ic("CRITICAL ALERT! Temp out of safe range: " + str(temp_value))
+                client.publish(mqtt_init.topic_alarm, f"CRITICAL: Temp is {temp_value} C!")
+                client.publish(mqtt_init.topic_actuator, "RELAY: ON")
+            else:
+                client.publish(mqtt_init.topic_actuator, "RELAY: OFF")
+                client.publish(mqtt_init.topic_alarm, "Status: Optimal (2 C - 8 C)")
+                
+        except Exception as e:
+            ic("Error processing message: " + str(e))
 
 def main():
     init_db()
-    client = mqtt.Client()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+    
+    client.username_pw_set(mqtt_init.username, mqtt_init.password)
+    client.tls_set()
+    
     client.on_message = on_message
-    client.connect(broker_ip, port)
-    client.subscribe(topic_temp)
+    client.connect(mqtt_init.broker_ip, mqtt_init.port)
+    client.subscribe([(mqtt_init.topic_temp, 0), (mqtt_init.topic_control, 0)])
     
     ic("Medical Cold Chain Manager is running and logging to DB...")
     client.loop_forever()
