@@ -63,8 +63,6 @@ The system uses a decentralized IoT architecture based on the **MQTT protocol** 
 ## ⚙️ Installation
 
 Install required dependencies:
-
-```bash
 pip install paho-mqtt icecream
 
 ▶️ How to Run
